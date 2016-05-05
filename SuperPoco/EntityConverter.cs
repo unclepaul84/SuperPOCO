@@ -9,6 +9,7 @@
 
     public static class EntityConverter
     {
+        private static DateTime MinAzureUtcDate = new DateTime(1601, 1, 1, 0, 0, 0, DateTimeKind.Utc);
         /// <summary>
         ///  Convert any JSON.NET seriliazable Object into a Dynamic Table Entity
         /// </summary>
@@ -21,10 +22,10 @@
         /// <param name="jsonSerializer">Optional Custom Json Serializer</param>
         /// <returns>Dynamic Table Entity to be stored in Azure Table Storage</returns>
         public static DynamicTableEntity ConvertToDynamicTableEntity<TValue>(TValue poco,
-            Func<TValue, string> partitionKeySelector, 
-            Func<TValue, string> rowKeySelector, 
+            Func<TValue, string> partitionKeySelector,
+            Func<TValue, string> rowKeySelector,
             DateTimeOffset? timeStamp = null,
-            string etag = null, 
+            string etag = null,
             JsonSerializer jsonSerializer = null)
         {
             return ConvertToDynamicTableEntity(poco,
@@ -45,12 +46,15 @@
         /// <param name="etag">Etag on Table Entity</param>
         /// <param name="jsonSerializer">Optional Custom Json Serializer</param>
         /// <returns>Dynamic Table Entity to be stored in Azure Table Storage</returns>
-        public static DynamicTableEntity ConvertToDynamicTableEntity(object poco, 
-            string partitionKey = null, 
+        public static DynamicTableEntity ConvertToDynamicTableEntity(object poco,
+            string partitionKey = null,
             string rowKey = null,
-            DateTimeOffset? timeStamp = null, 
-            string etag = null, 
-            JsonSerializer jsonSerializer = null)
+            DateTimeOffset? timeStamp = null,
+            string etag = null,
+            JsonSerializer jsonSerializer = null,
+            Func<EntityProperty, bool> propertyDescriminator = null, Func<IEnumerable<KeyValuePair<string, EntityProperty>>> additionalPropertyFactory = null
+
+            )
         {
             var dynamicTableEntity = new DynamicTableEntity
             {
@@ -73,8 +77,19 @@
 
             foreach (var pair in jObject.Values<JProperty>().Select(WriteToEntityProperty).Where(pair => pair.HasValue))
             {
+                if (propertyDescriminator != null && !propertyDescriminator(pair.Value.Value))
+                    continue;
+                
                 dynamicTableEntity.Properties.Add(pair.Value);
             }
+
+            if (additionalPropertyFactory!= null)
+                foreach (var ap in additionalPropertyFactory())
+                {
+                    dynamicTableEntity.Properties.Add(ap);
+
+                }
+
 
             return dynamicTableEntity;
         }
@@ -118,7 +133,13 @@
                 case JTokenType.Boolean:
                     return new KeyValuePair<string, EntityProperty>(name, new EntityProperty(value.ToObject<bool>()));
                 case JTokenType.Date:
-                    return new KeyValuePair<string, EntityProperty>(name, new EntityProperty(value.ToObject<DateTime>()));
+
+                    var date = value.ToObject<DateTime>();
+                    
+                    if (date < MinAzureUtcDate)
+                        date = MinAzureUtcDate;
+
+                    return new KeyValuePair<string, EntityProperty>(name, new EntityProperty(date));
                 case JTokenType.Float:
                     return new KeyValuePair<string, EntityProperty>(name, new EntityProperty(value.ToObject<double>()));
                 case JTokenType.Guid:
@@ -152,7 +173,7 @@
                     jObject.Add(property.Key, new JValue(property.Value.GuidValue));
                     return;
                 case EdmType.Int32:
-                    jObject.Add(property.Key, new JValue(property.Value.Int32Value)); 
+                    jObject.Add(property.Key, new JValue(property.Value.Int32Value));
                     return;
                 case EdmType.Int64:
                     jObject.Add(property.Key, new JValue(property.Value.Int64Value));
